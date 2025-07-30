@@ -1,0 +1,13 @@
+City,DateTime,Temperature (°C),Humidity (%),Pressure (hPa),Wind Speed (m/s),Weather
+Delhi,2025-07-30 14:05:38.716995,33.07,58,997,5.47,overcast clouds
+Mumbai,2025-07-30 14:05:38.910690,27.88,83,1005,9.62,overcast clouds
+Bangalore,2025-07-30 14:05:39.113653,27.85,68,1010,8.91,broken clouds
+Kolkata,2025-07-30 14:05:39.304216,29.24,75,998,3.61,overcast clouds
+Chennai,2025-07-30 14:05:39.512661,36.31,57,1004,5.64,overcast clouds
+Ahmedabad,2025-07-30 14:05:39.722155,27.25,59,1000,5.87,overcast clouds
+Delhi,2025-07-30 14:12:08.316029,33.32,56,996,5.34,overcast clouds
+Mumbai,2025-07-30 14:12:08.468482,27.8,83,1004,9.28,overcast clouds
+Bangalore,2025-07-30 14:12:08.670482,27.39,58,1008,9.03,broken clouds
+Kolkata,2025-07-30 14:12:08.840933,28.86,77,998,2.99,overcast clouds
+Chennai,2025-07-30 14:12:09.021117,36.39,49,1003,4.51,overcast clouds
+Ahmedabad,2025-07-30 14:12:09.196963,27.25,59,1000,5.87,overcast clouds
