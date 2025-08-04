@@ -26,8 +26,7 @@ import streamlit as st
 }
 
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-gcp_secrets = st.secrets["gcp_service_account"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(gcp_secrets, scope)
+creds = ServiceAccountCredentials.from_json_keyfile_dict("service_account.json", scope)
 client = gspread.authorize(creds)
 sheet = client.open("City Air Diaries Weather Log")
 
