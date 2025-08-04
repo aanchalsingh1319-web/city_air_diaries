@@ -1,316 +1,213 @@
 print("Welcome to the world of awesome weather")
 
-# Triggering redeploy
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from gspread_dataframe import set_with_dataframe
+from geopy.geocoders import Nominatim
 import streamlit as st
-import requests
 import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
-import random
+import requests
+from datetime import datetime
+import plotly.express as px
+import plotly.graph_objects as go
 import os
 
-# Load the data
-df = pd.read_csv("weather_data.csv", parse_dates=["DateTime"])
+# ---- Config ----
+st.set_page_config(page_title="City Air Diaries", layout="wide")
 
-# Title
-st.title("City Weather Dashboard")
-
-# City selector
-cities = df["City"].unique()
-selected_city = st.selectbox("Select a City", cities)
-
-# Filter data for selected city
-city_df = df[df["City"] == selected_city].sort_values("DateTime", ascending=True)
-
-# Latest weather info
-latest = city_df.iloc[-1]
-
-st.metric("Temperature (°C)", f"{latest['Temperature (°C)']:.1f}")
-st.metric("Humidity (%)", f"{latest['Humidity (%)']:.0f}")
-st.metric("Weather", latest['Weather'])
-st.metric("Wind Speed (m/s)", f"{latest['Wind Speed (m/s)']:.1f}")
-
-# Line chart - Temperature trend
-st.subheader("Temperature Over Time")
-fig, ax = plt.subplots()
-ax.plot(city_df["DateTime"], city_df["Temperature (°C)"], marker='o')
-ax.set_xlabel("Date")
-ax.set_ylabel("Temperature (°C)")
-ax.grid(True)
-st.pyplot(fig)
-
-# ------------------ API Setup ------------------ #
 API_KEY = "4eb98d4ed346aa423fa72bea6db5107b"
 BASE_URL = "http://api.openweathermap.org/data/2.5/weather"
-AQI_URL = "http://api.openweathermap.org/data/2.5/air_pollution"
+FORECAST_URL = "http://api.openweathermap.org/data/2.5/forecast"
+cities = ["Delhi", "Mumbai", "Bangalore", "Chennai", "Kolkata", "Ahmedabad", "Gurugram"]
 
-cities = ["Delhi", "Mumbai", "Bengaluru", "Chennai", "Kolkata"]
-
-# ------------------ Sidebar ------------------ #
+# ---- Sidebar ----
 st.sidebar.title("City Selection")
 selected_cities = st.sidebar.multiselect("Choose Cities to Compare", cities, default=["Delhi"])
-show_comparison = st.sidebar.checkbox("Show city comparison?", value=False)
-# ------------------ Refresh Button ------------------ #
+show_comparison = st.sidebar.checkbox("Show city comparison?")
+selected_city = st.sidebar.selectbox("Choose a City to View Details", cities)
+
+# 🔁 Manual Update Button
+if st.sidebar.button("Update All Data Now"):
+    os.system("python fetch_weather_history.py")
+    st.success("Weather history updated.")
+
 if st.sidebar.button("Refresh Weather"):
-    st.experimental_rerun()
+    st.rerun()
 
+# ---- Title ----
+st.title("🌤️ City Weather Dashboard")
+
+# ---- Current Weather ----
+st.subheader(f"Current Weather in {selected_city}")
+try:
+    params = {"q": selected_city, "appid": "4eb98d4ed346aa423fa72bea6db5107b", "units": "metric"}
+    r = requests.get(BASE_URL, params=params).json()
+    temp = r["main"]["temp"]
+    hum = r["main"]["humidity"]
+    wind = r["wind"]["speed"]
+    desc = r["weather"][0]["description"]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Temperature (°C)", f"{temp:.1f}")
+    c2.metric("Humidity (%)", f"{hum}%")
+    c3.metric("Wind Speed (m/s)", f"{wind}")
+
+except Exception as e:
+    st.error(f"Error fetching current weather: {e}")
+
+# ----- AQI Fetch -----
+st.subheader(f"Air Quality Index in {selected_city}")
+
+try:
+    geolocator = Nominatim(user_agent="city_air_diaries")
+    location = geolocator.geocode(selected_city)
+    lat, lon = location.latitude, location.longitude
+
+    aqi_url = "http://api.openweathermap.org/data/2.5/air_pollution"
+    aqi_params = {"lat": lat, "lon": lon, "appid": "4eb98d4ed346aa423fa72bea6db5107b"}
+    aqi_resp = requests.get(aqi_url, params=aqi_params).json()
+
+    aqi = aqi_resp["list"][0]["main"]["aqi"]
+
+    aqi_text = {
+        1: "Good 😊",
+        2: "Fair 🙂",
+        3: "Moderate 😐",
+        4: "Poor 😷",
+        5: "Very Poor 🤢"
+    }
+
+    st.metric("AQI Level", f"{aqi} - {aqi_text.get(aqi, 'Unknown')}")
+
+except Exception as e:
+    st.error(f"Error fetching AQI: {e}")
+
+# ---- 5-day Forecast ----
+st.subheader(f"5-Day Forecast for {selected_city}")
+try:
+    forecast_params = {"q": selected_city, "appid": "4eb98d4ed346aa423fa72bea6db5107b", "units": "metric"}
+    forecast_resp = requests.get(FORECAST_URL, params=forecast_params).json()
+    forecast_list = forecast_resp["list"]
+
+    forecast_data = []
+    for entry in forecast_list:
+        dt_txt = entry["dt_txt"]
+        temp_f = entry["main"]["temp"]
+        forecast_data.append({"DateTime": dt_txt, "Temperature (°C)": temp_f})
+
+    forecast_df = pd.DataFrame(forecast_data)
+    forecast_df["DateTime"] = pd.to_datetime(forecast_df["DateTime"])
+
+    # ---- Forecast Chart ----
+    fig_forecast = px.line(
+        forecast_df,
+        x="DateTime",
+        y="Temperature (°C)",
+        title="5-Day Temperature Forecast",
+        markers=True,
+        hover_data=["Temperature (°C)"]
+    )
+    fig_forecast.update_layout(xaxis_title="DateTime", yaxis_title="Temp (°C)")
+    st.plotly_chart(fig_forecast, use_container_width=True)
+
+except Exception as e:
+    st.error(f"Error fetching forecast: {e}")
+
+# ---- Historical Trends ----
+st.subheader(f"Temperature Trend for {selected_city}")
+history_file = "weather_history.csv"
+
+if os.path.exists(history_file):
+    hist_df = pd.read_csv(history_file)
+
+    # Clean data
+    hist_df = hist_df.dropna()
+    hist_df.columns = hist_df.columns.str.strip().str.lower()
+    hist_df["date"] = pd.to_datetime(hist_df["date"])
+
+    city_hist = hist_df[hist_df["city"].str.lower() == selected_city.lower()]
+
+    # ---- Historical Temperature Trend ----
+    if not city_hist.empty:
+        fig_hist = px.line(
+            city_hist,
+            x="date",
+            y="temperature",
+            title="Historical Temperature Trend",
+            markers=True,
+            hover_data=["humidity", "wind_speed", "description"]
+        )
+        fig_hist.update_layout(xaxis_title="Date", yaxis_title="Temp (°C)")
+        st.plotly_chart(fig_hist, use_container_width=True)
+
+        st.download_button(
+            "Download Historical Data",
+            city_hist.to_csv(index=False).encode(),
+            file_name=f"{selected_city}_history.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("No historical data for this city.")
+else:
+    st.warning("Historical CSV not found.")
+
+# ---- Comparison Table + Chart ----
 if show_comparison:
-    st.markdown("---")
     st.subheader("City Comparison")
-
-    st.write("Running city comparison block...")
-
-    comparison_data = []
-
-    for city in selected_cities:
-        st.write(f"Fetching data for {city}")
+    comp_data = []
+    for c in selected_cities:
         try:
-            params= {
-                "q" : city,
-                "appid": "4eb98d4ed346aa423fa72bea6db5107b",
-                "units": "metric"
-            }
-            response = requests.get(BASE_URL, params=params)
-            weather_data = response.json()
-            temp = weather_data["main"]["temp"]
-            humidity = weather_data["main"]["humidity"]
-            wind = weather_data["wind"]["speed"]
+            p = {"q": c, "appid": "4eb98d4ed346aa423fa72bea6db5107b", "units": "metric"}
+            resp = requests.get(BASE_URL, params=p).json()
+            comp_data.append({
+                "City": c,
+                "Temp (°C)": resp["main"]["temp"],
+                "Humidity": resp["main"]["humidity"],
+                "Wind": resp["wind"]["speed"]
+            })
+        except:
+            pass
 
-            lat = weather_data["coord"]["lat"]
-            lon = weather_data["coord"]["lon"]
-            aqi_resp = requests.get(AQI_URL, params={"lat": lat, "lon": lon, "appid": API_KEY})
-            aqi_index = aqi_resp.json()["list"][0]["main"]["aqi"]
-
-            comparison_data.append({
-                "City": city,
-                "Temperature (°C)": temp,
-                "Humidity (%)": humidity,
-                "Wind Speed (m/s)": wind,
-                "AQI Index": aqi_index
-                })
-        except Exception as e:
-            st.warning(f"Failed to load data for {city}: {e}")
-
-    if comparison_data:
-        df_comp = pd.DataFrame(comparison_data).set_index("City")
+    if comp_data:
+        df_comp = pd.DataFrame(comp_data).set_index("City")
         st.dataframe(df_comp)
 
-        st.markdown("###City Metrics")
-        st.bar_chart(df_comp[["Temperature (°C)", "Humidity (%)", "Wind Speed (m/s)"]])
+        df_reset = df_comp.reset_index()
+        fig_comp = px.bar(
+            df_reset,
+            x="City",
+            y=["Temp (°C)", "Humidity", "Wind"],
+            barmode="group",
+            title="City Comparison (Temp, Humidity, Wind)",
+            hover_name="City"
+        )
+        st.plotly_chart(fig_comp, use_container_width=True)
 
-        st.markdown("###AQI Comparison")
-        st.bar_chart(df_comp[["AQI Index"]])
-    else:
-        st.warning("No comparison data available.")
+# ----- 🟢 2️⃣ City Ranking Feature -----
 
-# ------------------ Fetch Weather Data ------------------ #
-params = {
-    "q": selected_city,
-    "appid": "4eb98d4ed346aa423fa72bea6db5107b",
-    "units": "metric"
-}
+if show_comparison and comp_data:
+    st.subheader("City Rankings")
 
-# ------------------ Save Weather History ------------------ #
-def save_weather_data_to_gsheet(city, temperature, humidity, wind_speed, weather_desc):
-    from gspread_dataframe import set_with_dataframe
+    temp_sorted = df_comp["Temp (°C)"].sort_values(ascending=False)
 
-    today = datetime.today().strftime('%Y-%m-%d')
-    new_row = pd.DataFrame([{
-        "date": today,
-        "city": city,
-        "temperature": temperature,
-        "humidity": humidity,
-        "wind_speed": wind_speed,
-        "description": weather_desc
-    }])
+    # Initialize Geolocator ----
+    geolocator = Nominatim(user_agent="city_air_diaries")
 
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
-    client = gspread.authorize(creds)
+    aqi_ranking = []
 
-    # 🧪 DEBUG 1: Confirm sheet open
-    try:
-        sheet = client.open("City Air Diaries Weather Log")
-        st.write("Opened Google Sheet successfully")
-    except Exception as e:
-        st.error(f"Failed to open sheet: {e}")
-        return
+    for c in selected_cities:
+        try:
+            loc = geolocator.geocode(c)
+            resp = requests.get(
+                "http://api.openweathermap.org/data/2.5/air_pollution",
+                params={"lat": loc.latitude, "lon": loc.longitude, "appid": "4eb98d4ed346aa423fa72bea6db5107b"}
+            ).json()
+            city_aqi = resp["list"][0]["main"]["aqi"]
+            aqi_ranking.append((c, city_aqi))
+        except:
+            pass
 
-    try:
-        worksheet = sheet.worksheet(city)
-        st.write(f"Worksheet for {city} found")
-    except gspread.exceptions.WorksheetNotFound:
-        worksheet = sheet.add_worksheet(title=city, rows="100", cols="10")
-        st.write(f"Created new worksheet for {city}")
+    aqi_sorted = sorted(aqi_ranking, key=lambda x: x[1])
 
-    # Get existing data
-    existing_data = worksheet.get_all_records()
-    df_existing = pd.DataFrame(existing_data)
+    st.markdown("**🌡️ Hottest Cities:**")
+    st.write(temp_sorted)
 
-    # Avoid duplicates
-    if not df_existing.empty and ((df_existing["date"] == today) & (df_existing["city"] == city)).any():
-        st.warning(f"Data for {city} on {today} already exists.")
-        return
-
-    # Write updated data
-    df_combined = pd.concat([df_existing, new_row], ignore_index=True) if not df_existing.empty else new_row
-    worksheet.clear()
-    set_with_dataframe(worksheet, df_combined)
-    st.success(f"Data saved to Google Sheet for {city} on {today}")
-
-
-
-
-# ------------------ Main App Logic ------------------ #
-try:
-    response = requests.get(BASE_URL, params=params)
-    response.raise_for_status()
-    data = response.json()
-
-    # Weather Info
-    temperature = data["main"]["temp"]
-    humidity = data["main"]["humidity"]
-    wind_speed = data["wind"]["speed"]
-    weather_desc = data["weather"][0]["description"].title()
-
-    st.title(f"Weather Dashboard - {selected_city}")
-    st.subheader(f"Current Weather: {weather_desc}")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Temperature", f"{temperature} °C")
-    col2.metric("Humidity", f"{humidity} %")
-    col3.metric("Wind Speed", f"{wind_speed} m/s")
-
-    save_weather_data_to_gsheet(selected_city, temperature, humidity, wind_speed, weather_desc)
-
-    # ------------------ AQI Section ------------------ #
-    lat = data["coord"]["lat"]
-    lon = data["coord"]["lon"]
-
-    aqi_params = {
-        "lat": lat,
-        "lon": lon,
-        "appid": "4eb98d4ed346aa423fa72bea6db5107b"
-    }
-    aqi_response = requests.get(AQI_URL, params=aqi_params)
-    aqi_data = aqi_response.json()
-
-    st.markdown("---")
-    st.subheader("Air Quality Index (AQI)")
-    st.json(aqi_data)  # for debugging
-
-    try:
-        aqi_index = aqi_data["list"][0]["main"]["aqi"]
-        components = aqi_data["list"][0]["components"]
-
-        aqi_scale = {
-            1: "🟢 Good",
-            2: "🟡 Fair",
-            3: "🟠 Moderate",
-            4: "🔴 Poor",
-            5: "🔳 Very Poor"
-        }
-        aqi_label = aqi_scale.get(aqi_index, "Unknown")
-
-        st.metric(label="AQI Level", value=f"{aqi_index} - {aqi_label}")
-        st.write("**Pollutants (ug/m3):**")
-        st.write(f"PM2.5: {components['pm2_5']}")
-        st.write(f"PM10: {components['pm10']}")
-        st.write(f"CO: {components['co']}")
-        st.write(f"NO₂: {components['no2']}")
-        st.write(f"O₃: {components['o3']}")
-
-    except Exception as e:
-        st.error(f"Couldn't load AQI data: {e}")
-
-    # ------------------ Historical Trend ------------------ #
-    st.markdown("---")
-    st.subheader(f"Temperature Trend for {selected_city}")
-    try:
-        history_df = pd.read_csv("weather_history.csv")
-        history_df = history_df[history_df["city"] == selected_city]
-        if history_df.empty:
-            st.warning(f"No historical data for {selected_city} yet.")
-        else:
-            temp_df = history_df[["date", "temperature"]].set_index("date")
-            st.line_chart(temp_df)
-        history_df = history_df.sort_values("date")
-        temp_df = history_df[["date", "temperature"]].set_index("date")
-        st.line_chart(temp_df)
-    except FileNotFoundError:
-        st.warning("No historical data found yet. Visit this page daily to build your dataset.")
-
-
-
-    # ------------------ Download Weather History CSV ------------------ #
-
-    st.markdown("---")
-    st.subheader("📥 Export Weather History")
-
-    if os.path.exists("weather_history.csv"):
-        df_all = pd.read_csv("weather_history.csv")
-        df_city = df_all[df_all["city"] == selected_city]
-
-        if not df_city.empty:
-            csv = df_city.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label=f"Download {selected_city} Weather History CSV",
-                data=csv,
-                file_name=f"{selected_city}_weather_history.csv",
-                mime="text/csv"
-            )
-        else:
-            st.warning(f"No weather history found for {selected_city}.")
-    else:
-        st.warning("No weather history available for download yet.")
-
-    # ------------------ 5-Day Forecast ------------------ #
-    st.markdown("---")
-    st.subheader("5-Day Forecast (Daily Avg Temperature)")
-
-    forecast_url = "http://api.openweathermap.org/data/2.5/forecast"
-    forecast_params = {
-        "q": selected_city,
-        "appid": "4eb98d4ed346aa423fa72bea6db5107b",
-        "units": "metric"
-    }
-    forecast_response = requests.get(forecast_url, params=forecast_params)
-    forecast_data = forecast_response.json()
-
-    # Process forecast data
-    forecast_list = forecast_data.get("list", [])
-    forecast_by_day = {}
-
-    for entry in forecast_list:
-        dt_txt = entry["dt_txt"]  # e.g., '2025-08-01 12:00:00'
-        date = dt_txt.split(" ")[0]
-        temp = entry["main"]["temp"]
-
-        if date not in forecast_by_day:
-            forecast_by_day[date] = []
-        forecast_by_day[date].append(temp)
-
-    # Calculate daily average temperatures
-    dates = []
-    avg_temps = []
-    for date, temps in forecast_by_day.items():
-        if len(dates) >= 5:
-            break
-        dates.append(date)
-        avg_temps.append(sum(temps) / len(temps))
-
-    # Plot forecast
-    if dates:
-        forecast_df = pd.DataFrame({
-            "Date": pd.to_datetime(dates).strftime("%d %b"),
-            "Avg Temp (°C)": avg_temps
-        })
-        st.line_chart(forecast_df.set_index("Date"))
-    else:
-        st.warning("Forecast data not available.")
-except requests.exceptions.RequestException as e:
-    st.error(f"Failed to fetch weather data: {e}")
-
+    st.markdown("**🌬️ Cleanest Air:**")
+    st.write(pd.DataFrame(aqi_sorted, columns=["City", "AQI"]).set_index("City"))
